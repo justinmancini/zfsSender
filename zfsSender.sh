@@ -10,6 +10,21 @@ cyan="$(tput setaf 6)"
 bold="$(tput bold)"
 reset="$(tput sgr0)"
 
+# Help function
+function help {
+echo -e "\nThis script was written to aid in the sending and receiving of specific ZFS snapshots from one Zpool to another.\n"
+
+echo -e "\nScript usage:\n"
+
+echo -e "\n./zfsSender.sh -o [source dataset] -d [destination dataset]\n"
+
+echo -e "\nOptions:\n"
+
+echo -e "\n-f  -  Initial snapshot to send"
+echo -e "\n-c  -  Number of snapshots to send after the initial.  (If you set this to 4, you will transfer 5 total snapshots)"
+echo -e "\n-h  -  View help menu"
+}
+
 # Set variables and gather information
 
 while getopts ':o:d:f:c:r:' opt ; do
