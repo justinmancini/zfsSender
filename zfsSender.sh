@@ -12,44 +12,58 @@ reset="$(tput sgr0)"
 
 # Set variables and gather information
 
-sourceDS=$1
-destinationDS=$2
-firstSnap=$3
-snapCount=$4
+while getopts ':o:d:f:c:r:' opt ; do
+        case $opt in
+		o) sourceDS=${OPTARG} ;;
+		d) destinationDS=${OPTARG} ;;
+                f) firstSnap=${OPTARG} ;;
+		c) snapCount=${OPTARG} ;;
+		r) rangeEnd=${OPTARG} ;;
 
-if ! [[ $1 ]]; then
+                \?) echo "${red}${bold}Invalid option -$OPTARG${reset}"; help; exit ;;
+        esac
+done
+
+if ! [[ $sourceDS ]]; then
         echo -n "${yellow}${bold}Enter the SOURCE dataset:${reset} "
         read -r sourceDS
 fi
 
-if ! [[ $2 ]]; then
+if ! [[ $destinationDS ]]; then
         echo -n "${yellow}${bold}Enter the DESTINATION dataset:${reset} "
         read -r destinationDS
 fi
 
-if ! [[ $3 ]]; then
-        echo -n "${yellow}${bold}Enter the epoch of the FIRST snapshot you want to copy:${reset} "
-        read -r firstSnap
+if ! [[ $firstSnap ]]; then
+        echo -n "${yellow}${bold}Initial snapshot was not specified.  Using first available snapshot - "
+	firstSnap=$( zfs list -o name -H -t snapshot -r $sourceDS | head -n1 | grep -o "@.*" | sed -e 's/@//' )
+	echo -e "$firstSnap"
 fi
 
-if ! [[ $4 ]]; then
-        echo -n "${yellow}${bold}Enter the number of snapshots you'd like to copy after the initial snapshot:${reset} "
-        read -r snapCount
+if ! [[ $snapCount ]] | [[ $rangeEnd ]]; then
+        echo -e "${yellow}${bold}No end snapshot or snapshot count was entered.  Sending all snapshots after $firstSnap.${reset}"
+	snapCount="all"
 fi
 
 # Generate and print list of source napshots
 
 
-if [[ $snapCount = "\*" ]]; then
-	echo 1
-	snapList=$( grep -o "$firstSnap.*" <(zfs list -o name -r $sourceDS -H -t snapshot -o name ) )
+if [[ $snapCount = "all" ]]; then
+	fullSourceList=$( zfs list -o name -r $sourceDS -H -t snapshot -o name )
+	snaps=$( echo $fullSourceList | grep -o "$sourceDS@$firstSnap.*" )
+	for snap in $snaps; do
+		snapList+=($snap)
+	done
 else
-	snapList=$( grep -A"$snapCount" "$firstSnap" <(zfs list -o name -r $sourceDS -H -t snapshot -o name ) )
+	snaps=$( grep -A"$snapCount" "$firstSnap" <(zfs list -o name -r $sourceDS -H -t snapshot -o name ) )
+	for snap in $snaps; do
+		snapList+=($snap)
+	done
 fi
 
 echo -e "${yellow}${bold}Snapshot List:${reset}\n"
 
-for snap in "$snapList"; do
+for snap in "${snapList[@]}"; do
 	epoch=$( echo "$snap" | grep -o "@.*" | sed -e 's/@//' )
 	epochList+=($epoch)
 done
