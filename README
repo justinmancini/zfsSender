@@ -1,4 +1,4 @@
-This script was written to aid in the sending and receiving of specific ZFS snapshots from one Zpool to another.
+This script was written to aid in the sending and receiving of specific ZFS snapshot ranges from one Zpool to another.
 
 Script usage:
 
