@@ -60,6 +60,13 @@ if ! [[ $snapCount ]] | [[ $rangeEnd ]]; then
 	snapCount="all"
 fi
 
+# Ensure source dataset exists
+
+if ! [[ $( zfs list -o name -H -r $sourceDS ) ]]; then
+	echo -e "${red}${bold}Error!  The source dataset does not exist, or the zpool is not imported!"
+ 	exit 1
+ fi
+ 
 # Generate and print list of source napshots
 
 
@@ -70,29 +77,32 @@ if [[ $snapCount = "all" ]]; then
 		snapList+=($snap)
 	done
 else
-	snaps=$( grep -A"$snapCount" "$firstSnap" <(zfs list -o name -r $sourceDS -H -t snapshot -o name ) )
+	snaps=$( grep -A"$snapCount" -o "$sourceDS@$firstSnap" <(zfs list -o name -r $sourceDS -H -t snapshot -o name ) )
 	for snap in $snaps; do
 		snapList+=($snap)
 	done
 fi
 
-echo -e "${yellow}${bold}Snapshot List:${reset}\n"
+if ! [[ ${snapList[*]} ]]; then
+	echo -e "${red}${bold}Error!  Unable to generate a list of snapshots!"
+ 	exit 1
+ fi
 
 for snap in "${snapList[@]}"; do
-	epoch=$( echo "$snap" | grep -o "@.*" | sed -e 's/@//' )
-	epochList+=($epoch)
+	snapName=$( echo "$snap" | grep -o "@.*" | sed -e 's/@//' )
+	snapNameList+=($snapName)
 done
 
-for X in "${epochList[@]}"; do
-	echo ${cyan}$X${reset}
-done
+echo "${cyan}${snapNameList[@]}${reset}"
+
+echo -e "${yellow}${bold}Snapshot List:${reset}\n"
 
 echo -en "\n${yellow}${bold}Would you like to proceed?${reset} "
 
 read -r "yn"
 
 while ! [[ $yn = @(y|Y|N|n) ]]; do
-        echo -n "Would you like to proceed? "
+        echo -n "Would you like to proceed (y/n only)? "
         read -r "yn"
 done
 
@@ -105,8 +115,8 @@ fi
 
 function resume {
 	destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | tail -n1 | grep -o "@.*" | sed -e 's/@//' )
-        destNextSnap=$( echo ${epochList[*]} | grep -o "$destLastSnap.*" | awk '{print $2}' )
-	lastSnap=$( echo "${epochList[-1]}" )
+        destNextSnap=$( echo ${snapNameList[*]} | grep -o "$destLastSnap.*" | awk '{print $2}' )
+	lastSnap=$( echo "${snapNameList[-1]}" )
 	if ! [[ $destNextSnap ]]; then
 		echo -e "\n${green}${bold}Transfer is complete.${reset}\n\n"
 		${cyan}zfs list -t snapshot -o name,creation -r $destinationDS${reset}
@@ -130,21 +140,21 @@ destCheck=$( zfs list $destinationDS -o name -H 2>/dev/null)
 
 if [[ $destCheck ]]; then
 	destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | tail -n1 | grep -o "@.*" | sed -e 's/@//' )
-	lastSnapCheck=$( echo ${epochList[*]} | grep -o "$destLastSnap" )
+	lastSnapCheck=$( echo ${snapNameList[*]} | grep -o "$destLastSnap" )
 	if ! [[ $lastSnapCheck ]]; then 
 		echo "${red}${bold}Destination dataset already exists, but the snapshots don't match!  Exiting.${reset}"
 	else
 		resume
 	fi
 else
-	firstSnap=${epochList[0]}
+	firstSnap=${snapNameList[0]}
 	echo "${yellow}${bold}Beginning full send of ${green}$sourceDS${yellow} beginning with snapshot ${cyan}$firstSnap${yellow}..${reset}"
 	snapSize=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
 	snapBytes=$( numfmt --from auto $snapSize )
 	zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
 fi
 
-lastSnap=$( echo "${epochList[-1]}" )
+lastSnap=$( echo "${snapNameList[-1]}" )
 destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | grep -o "@.*" | sed -e 's/@//' )
 
 if ! [[ $destLastSnap = $lastSnap ]]; then
