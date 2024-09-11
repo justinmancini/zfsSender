@@ -4,8 +4,15 @@ Script usage:
 
 ./zfsSender.sh -o [source dataset] -d [destination dataset]
 
+Example:
+
+./zfsSender.sh -o foo/bar/foobar -d boo/far/barfoo
+
 Options:
 
+-o  -  Source dataset 
+-d  -  Destination dataset 
 -f  -  Initial snapshot to send
 -c  -  Number of snapshots to send after the initial.  (If you set this to 4, you will transfer 5 total snapshots)
+
 -h  -  View help menu
