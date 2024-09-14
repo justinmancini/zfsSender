@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -x
 
 # Styling
 TERM=xterm-256color
@@ -20,6 +20,11 @@ echo -e "\n./zfsSender.sh -o [source dataset] -d [destination dataset]\n"
 
 echo -e "\nOptions:\n"
 
+
+echo -e "\n-o  -  Source dataset"
+echo -e "\n-d  -  Destination dataset"
+echo -e "\n-f  -  IP address of the remote host machine with the source zpool imported."
+echo -e "\n-f  -  SSH username of remote host."
 echo -e "\n-f  -  Initial snapshot to send"
 echo -e "\n-c  -  Number of snapshots to send after the initial.  (If you set this to 4, you will transfer 5 total snapshots)"
 echo -e "\n-h  -  View help menu"
@@ -27,17 +32,27 @@ echo -e "\n-h  -  View help menu"
 
 # Set variables and gather information
 
-while getopts ':o:d:f:c:r:' opt ; do
+while getopts ':o:d:f:c:r:s:u:' opt ; do
         case $opt in
 		o) sourceDS=${OPTARG} ;;
 		d) destinationDS=${OPTARG} ;;
                 f) firstSnap=${OPTARG} ;;
 		c) snapCount=${OPTARG} ;;
 		r) rangeEnd=${OPTARG} ;;
+		s) sourceServer=${OPTARG} ;;
+		u) sshUser=${OPTARG} ;;
 
                 \?) echo "${red}${bold}Invalid option -$OPTARG${reset}"; help; exit ;;
         esac
 done
+
+# Make sure zfs is installed
+
+#zfsCheck=$( zfs version 2>&1 > /dev/null )
+#if ! [[ $? = 0 ]]; then
+#	echo -e "${red}${bold}Error!${yellow} ZFS does not appear to be installed on this machine!${reset}"
+#	exit 1
+#fi
 
 if ! [[ $sourceDS ]]; then
         echo -n "${yellow}${bold}Enter the SOURCE dataset:${reset} "
@@ -60,13 +75,81 @@ if ! [[ $snapCount ]] | [[ $rangeEnd ]]; then
 	snapCount="all"
 fi
 
+if [[ $sourceServer ]]; then
+	localOnly=0
+else
+	echo "${yellow}${bold}No source server was specified.  Running in local mode.."
+	localOnly=1
+fi
+
+if [[ $localOnly = 0 ]]; then
+        if ! [[ $sshUser ]]; then
+                echo -e "${yellow}${bold}SSH user name was not specified.  Using $( whoami ).."
+                sshUser=$( whoami )
+        fi
+fi
+
+function sshCmd {
+	SOURCE_CONTROL_PATH="~/.ssh/ssh-root-$sourceServer-22"
+	SOURCE_SSH_PID=$( ssh -O check -o ControlPath=$SOURCE_CONTROL_PATH $sshUser@$sourceServer 2>&1 | grep "Master running" | awk '{print $3}' | sed -e 's/pid\=//' -e 's/(//' -e 's/)//' )
+	if ! [[ $SOURCE_SSH_PID ]]; then
+		echo -n "${bold}${yellow}Opening SSH session to $sourceServer..${reset}"
+		ssh -N -q -o StrictHostKeyChecking=no -o ControlMaster=yes -o ControlPath=$SOURCE_CONTROL_PATH $sshUser@$sourceServer &
+		if [[ $? = 0 ]]; then
+	        	echo -e "${green}${bold}Ok!${reset}"
+		else
+			echo -e "${red}${bold}Error!${reset}"
+			echo -e "\n\n${yellow}${bold}Unable to establish SSH connection to $SOURCE_SERVER.  Exiting${reset}"
+			exit 1
+		fi
+	fi
+	ssh -q -o StrictHostKeyChecking=no -o ControlMaster=no -o ControlPath=$SOURCE_CONTROL_PATH $sshUser@$sourceServer $@
+}
+
+function cleanUp {
+        echo -en "\n\n${magenta}${bold}Closing SSH sessions.. "
+        SSH_PID=$( ssh -O check -o ControlPath=$SOURCE_CONTROL_PATH $sourceServer 2>&1 | grep "Master running" | awk '{print $3}' | sed -e 's/pid\=//' -e 's/(//' -e 's/)//' )
+	DEST_SSH_PID=$( ssh -O check -o ControlPath=$DEST_CONTROL_PATH $destServer 2>&1 | grep "Master running" | awk '{print $3}' | sed -e 's/pid\=//' -e 's/(//' -e 's/)//' )
+	if [[ $SSH_PID ]]; then
+                for PID in "$SSH_PID"; do
+			ssh -q -O stop -o ControlPath=$SOURCE_CONTROL_PATH $sshUser@$sourceServer
+		done
+		SSH_PID=$( ssh -O check -o ControlPath=$SOURCE_CONTROL_PATH $sourceServer 2>&1 | grep "Master running" | awk '{print $3}' | sed -e 's/pid\=//' -e 's/(//' -e 's/)//' )
+		if ! [[ $SSH_PID ]]; then
+			echo -e "${yellow}${bold}Unable to establish SSH connection to $sourceServer.  Exiting.${reset}"
+			cleanUp
+		fi
+	fi
+	if [[ $DEST_SSH_PID ]]; then
+		for PID in "$DEST_SSH_PID"; do
+			ssh -q -O stop -o ControlPath=$SOURCE_CONTROL_PATH $sshUser@$destServer
+		done
+		DEST_SSH_PID=$( ssh -O check -o ControlPath=$DEST_CONTROL_PATH $destServer 2>&1 | grep "Master running" | awk '{print $3}' | sed -e 's/pid\=//' -e 's/(//' -e 's/)//' )
+                if ! [[ $DEST_SSH_PID ]]; then
+                        echo -e "${yellow}${bold}Unable to establish SSH connection to $destServer.  Exiting.${reset}"
+			cleanUp
+                fi
+        fi
+        if [[ $? = 0 ]]; then
+        	echo -e "${bold}${green}Ok!${reset}"
+        fi
+}
+
 # Ensure source dataset exists
 
-if ! [[ $( zfs list -o name -H -r $sourceDS ) ]]; then
-	echo -e "${red}${bold}Error!  The source dataset does not exist, or the zpool is not imported!"
- 	exit 1
- fi
- 
+if [[ $local = 1 ]]; then
+	if ! [[ $( zfs list -o name -H -r $sourceDS ) ]]; then
+		echo -e "${red}${bold}Error!${yellow}  The source dataset does not exist, or the zpool is not imported!"
+ 		exit 1
+	fi
+else
+	sshCmd "zfs list -o name -H -r $sourceDS" 2&>1 > /dev/null
+	if ! [[ $? = 0  ]]; then
+		echo -e "${red}${bold}Error!${yellow}  The source dataset does not exist on $sourceServer, or the zpool is not imported!"
+                exit 1
+        fi
+fi
+
 # Generate and print list of source napshots
 
 
@@ -123,9 +206,17 @@ function resume {
 		exit
 	else
 		echo "${yellow}${bold}Beginning incremental send from ${cyan}$destLastSnap${yellow} to ${cyan}$destNextSnap${yellow}..${reset}"
-        	snapSize=$( zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
-	        snapBytes=$( numfmt --from auto $snapSize )
-		zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | zfs recv $destinationDS
+		if [[ localOnly = 1 ]]; then
+	        	snapSize=$( zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
+	        else
+			snapSize=$( sshCmd zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
+		fi
+		snapBytes=$( numfmt --from auto $snapSize )
+		if [[ localOnly = 1 ]]; then
+			zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | zfs recv $destinationDS
+		else
+			zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | sshCmd zfs recv $destinationDS
+		fi
 	fi
 	if ! [[ $destLastSnap = $lastSnap ]]; then
         	resume
@@ -135,7 +226,6 @@ function resume {
 }
 
 # Check to see if destination exists
-
 destCheck=$( zfs list $destinationDS -o name -H 2>/dev/null)
 
 if [[ $destCheck ]]; then
@@ -149,13 +239,21 @@ if [[ $destCheck ]]; then
 else
 	firstSnap=${snapNameList[0]}
 	echo "${yellow}${bold}Beginning full send of ${green}$sourceDS${yellow} beginning with snapshot ${cyan}$firstSnap${yellow}..${reset}"
-	snapSize=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	if [[ $localOnly = 1 ]]; then
+		snapSize=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	else
+		snapSize=$( sshCmd zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	fi
 	snapBytes=$( numfmt --from auto $snapSize )
-	zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
+	if [[ $localOnly = 1 ]]; then
+		zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
+	else
+		sshCmd zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
+	fi
 fi
 
-lastSnap=$( echo "${snapNameList[-1]}" )
-destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | grep -o "@.*" | sed -e 's/@//' )
+	lastSnap=$( echo "${snapNameList[-1]}" )
+	destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | grep -o "@.*" | sed -e 's/@//' )
 
 if ! [[ $destLastSnap = $lastSnap ]]; then
 	resume
