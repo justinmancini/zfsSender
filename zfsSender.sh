@@ -32,7 +32,7 @@ echo -e "\n\n-h  -  View help menu"
 
 # Set variables and gather information
 
-while getopts ':o:d:f:c:r:s:u:' opt ; do
+while getopts ':o:d:f:c:r:s:u:P' opt ; do
         case $opt in
 		o) sourceDS=${OPTARG} ;;
 		d) destinationDS=${OPTARG} ;;
@@ -41,6 +41,7 @@ while getopts ':o:d:f:c:r:s:u:' opt ; do
 		r) rangeEnd=${OPTARG} ;;
 		s) sourceServer=${OPTARG} ;;
 		u) sshUser=${OPTARG} ;;
+  		P) push=1
 
                 \?) echo "${red}${bold}Invalid option -$OPTARG${reset}"; help; exit ;;
         esac
@@ -208,14 +209,18 @@ function resume {
 		echo "${yellow}${bold}Beginning incremental send from ${cyan}$destLastSnap${yellow} to ${cyan}$destNextSnap${yellow}..${reset}"
 		if [[ localOnly = 1 ]]; then
 	        	snapSize=$( zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
-	        else
+	        elif [[ push=1 ]]; then
 			snapSize=$( sshCmd zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
+   		else
+     			snapSize=$( zfs send -i @$destLastSnap $sourceDS@$destNextSnap -nvP | tail -n1 | awk '{print $2}' )
 		fi
 		snapBytes=$( numfmt --from auto $snapSize )
 		if [[ localOnly = 1 ]]; then
 			zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | zfs recv $destinationDS
-		else
+		elif [[ push=1 ]]; then
 			zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | sshCmd zfs recv $destinationDS
+   		else
+     			sshCmd zfs send -i @$destLastSnap $sourceDS@$destNextSnap | pv --size $snapBytes | zfs recv $destinationDS
 		fi
 	fi
 	if ! [[ $destLastSnap = $lastSnap ]]; then
@@ -226,11 +231,21 @@ function resume {
 }
 
 # Check to see if destination exists
-destCheck=$( zfs list $destinationDS -o name -H 2>/dev/null)
+if [[ push=1 ]]; then
+	destCheck=$( sshCmd zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+else 
+	destCheck=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+fi
 
 if [[ $destCheck ]]; then
-	destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | tail -n1 | grep -o "@.*" | sed -e 's/@//' )
+	if [[ push=1 ]]; then
+		destLastSnap=$( sshCmd zfs list -t snapshot -o name -r $destinationDS -H | tail -n1 | grep -o "@.*" | sed -e 's/@//' )
+	else 
+		destLastSnap=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	fi
+ 
 	lastSnapCheck=$( echo ${snapNameList[*]} | grep -o "$destLastSnap" )
+ 
 	if ! [[ $lastSnapCheck ]]; then 
 		echo "${red}${bold}Destination dataset already exists, but the snapshots don't match!  Exiting.${reset}"
 	else
@@ -241,20 +256,30 @@ else
 	echo "${yellow}${bold}Beginning full send of ${green}$sourceDS${yellow} beginning with snapshot ${cyan}$firstSnap${yellow}..${reset}"
 	if [[ $localOnly = 1 ]]; then
 		snapSize=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
-	else
-		snapSize=$( sshCmd zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	elif [[ push=1 ]]; then
+		snapSize=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+  	else 
+   		snapSize=$( sshCmd zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
 	fi
 	snapBytes=$( numfmt --from auto $snapSize )
 	if [[ $localOnly = 1 ]]; then
 		zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
-	else
+	elif [[ push=1 ]]; then
 		sshCmd zfs send $sourceDS@$firstSnap | pv --size $snapBytes | zfs recv $destinationDS
+  	else
+   		zfs send $sourceDS@$firstSnap | pv --size $snapBytes | sshCmd zfs recv $destinationDS
 	fi
 fi
 
 	lastSnap=$( echo "${snapNameList[-1]}" )
-	destLastSnap=$( zfs list -t snapshot -o name -r $destinationDS -H | grep -o "@.*" | sed -e 's/@//' )
 
+	if [[ push=1 ]]; then
+		destLastSnap=$( sshCmd zfs list -t snapshot -o name -r $destinationDS -H | tail -n1 | grep -o "@.*" | sed -e 's/@//' )
+	else 
+		destLastSnap=$( zfs send $sourceDS@$firstSnap -nvP | tail -n1 | awk '{print $2}' )
+	fi
+
+ 
 if ! [[ $destLastSnap = $lastSnap ]]; then
 	resume
 fi
