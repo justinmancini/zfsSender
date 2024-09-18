@@ -23,11 +23,11 @@ echo -e "\nOptions:\n"
 
 echo -e "\n-o  -  Source dataset"
 echo -e "\n-d  -  Destination dataset"
-echo -e "\n-f  -  IP address of the remote host machine with the source zpool imported."
-echo -e "\n-f  -  SSH username of remote host."
+echo -e "\n-s  -  IP address of the remote host machine with the source zpool imported."
+echo -e "\n-u  -  SSH username of remote host."
 echo -e "\n-f  -  Initial snapshot to send"
 echo -e "\n-c  -  Number of snapshots to send after the initial.  (If you set this to 4, you will transfer 5 total snapshots)"
-echo -e "\n-h  -  View help menu"
+echo -e "\n\n-h  -  View help menu"
 }
 
 # Set variables and gather information
